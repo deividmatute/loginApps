@@ -1,0 +1,6 @@
+*.mp3
+*.mp4
+*.png
+.vscode
+*/Audios_Sin_Nombre/*
+*.exe
