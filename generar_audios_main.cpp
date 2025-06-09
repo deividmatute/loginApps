@@ -5,6 +5,7 @@
 #include <regex>
 #include <algorithm>
 #include <cstdlib>
+#include <sstream> // Necesario para std::stringstream en extraer_numero si se usa directamente
 
 namespace fs = std::filesystem;
 
@@ -28,10 +29,11 @@ void crear_silencio(const std::string& archivo, float duracion) {
 // Extraer numeros de nombre de archivo
 int extraer_numero(const std::string& nombre) {
     std::smatch match;
+    // Regex para encontrar uno o más dígitos
     if (std::regex_search(nombre, match, std::regex(R"(\d+)"))) {
         return std::stoi(match[0]);
     }
-    return -1;
+    return -1; // Retorna -1 si no se encuentra ningún número
 }
 
 // Listar archivos en orden numerico
@@ -78,19 +80,24 @@ int main() {
     std::string base_audios_conv = "Audios/";
     std::string en_dir = base_audios_conv + "Frases_English";
     std::string es_dir = base_audios_conv + "Frases_Spanish";
-    std::string sub_dir_base = base_audios_conv + "SubFrases_Frase"; // Renamed for clarity
-    std::string salida = "Audios_Main_Lesson";
-    std::string silencio_file = "silence.mp3"; // Renamed for clarity
-    float duracion_silencio = 0.5f; // A short silence for placeholders
+    std::string sub_dir_base = base_audios_conv + "SubFrases_Frase";
+    std::string salida = "Audios_Main_Lesson"; // Directorio donde se generarán los audios finales
+    std::string silencio_file = "silence.mp3"; // Archivo de silencio temporal
 
-    // Prepare the output directory (clean it if it exists)
+    // Preparar el directorio de salida (limpiarlo si existe)
     prepare_target_directory(salida);
     
-    // Create the silence file (always overwrite)
-    crear_silencio(silencio_file, duracion_silencio);
+    // Crear el archivo de silencio (siempre sobrescribir)
+    // Usamos una duración pequeña, ya que este silencio es un 'relleno' en la lógica de copia.
+    crear_silencio(silencio_file, 0.5f); 
 
     auto frases_english_audios = listar_archivos(en_dir, R"(en\d+\.mp3)");
-    int contador_salida_audios = 1; // This will count from 1 to 255
+    int contador_salida_audios = 1; // Contador para nombrar los archivos de salida (en1.mp3, en2.mp3, etc.)
+
+    if (frases_english_audios.empty()) {
+        std::cerr << "Error: No se encontraron audios base en '" << en_dir << "'. Asegurese de que los archivos 'enX.mp3' existan." << std::endl;
+        return EXIT_FAILURE;
+    }
 
     for (const auto& frase_path : frases_english_audios) {
         int num = extraer_numero(frase_path.filename().string());
@@ -98,43 +105,51 @@ int main() {
         std::string es_audio_path = es_dir + "/es" + std::to_string(num) + ".mp3";
         std::string current_sub_frase_dir = sub_dir_base + std::to_string(num);
 
-        // Logic to match image generation from 'imagenes.cpp'
+        // --- Lógica de preparación de audios para Main Lesson ---
+        // Se corrige el problema: los dos primeros audios deben ser la frase en inglés.
 
-        // 1. Corresponds to Image 1 (Background only) - Use silence as placeholder audio
-        fs::copy(silencio_file, salida + "/en" + std::to_string(contador_salida_audios++) + ".mp3", fs::copy_options::overwrite_existing);
-
-        // 2. Corresponds to Image 2 (English phrase)
+        // 1. Primera repetición de la frase en inglés
         fs::copy(en_audio_path, salida + "/en" + std::to_string(contador_salida_audios++) + ".mp3", fs::copy_options::overwrite_existing);
 
-        // 3. Corresponds to Image 3 (English + Spanish phrase)
+        // 2. Segunda repetición de la frase en inglés
+        fs::copy(en_audio_path, salida + "/en" + std::to_string(contador_salida_audios++) + ".mp3", fs::copy_options::overwrite_existing);
+
+        // 3. Traducción al español (o fallback a inglés si no existe)
         if (fs::exists(es_audio_path)) {
             fs::copy(es_audio_path, salida + "/en" + std::to_string(contador_salida_audios++) + ".mp3", fs::copy_options::overwrite_existing);
         } else {
-            // If Spanish audio doesn't exist, use English audio as fallback for this image slot
+            std::cerr << "Advertencia: Audio en espanol para 'en" << num << ".mp3' no encontrado en '" << es_dir << "'. Usando la frase en ingles como respaldo.\n";
             fs::copy(en_audio_path, salida + "/en" + std::to_string(contador_salida_audios++) + ".mp3", fs::copy_options::overwrite_existing);
         }
 
-        // 4. Corresponds to Subphrases (each generates 2 images: highlight + repeat)
-        if (fs::exists(current_sub_frase_dir)) {
-            auto subfrases_audios = listar_archivos(current_sub_frase_dir, R"(en\d+fr\d+\.mp3)"); // Regex for subphrases
+        // 4. Subfrases (cada una se copia dos veces)
+        if (fs::exists(current_sub_frase_dir) && fs::is_directory(current_sub_frase_dir)) {
+            auto subfrases_audios = listar_archivos(current_sub_frase_dir, R"(en\d+fr\d+\.mp3)"); // Regex para subfrases
             for (const auto& sub_audio_path : subfrases_audios) {
-                // First subphrase image
                 fs::copy(sub_audio_path, salida + "/en" + std::to_string(contador_salida_audios++) + ".mp3", fs::copy_options::overwrite_existing);
-                // Second subphrase (repeat) image
                 fs::copy(sub_audio_path, salida + "/en" + std::to_string(contador_salida_audios++) + ".mp3", fs::copy_options::overwrite_existing);
             }
+        } else {
+             std::cout << "Info: Directorio de subfrases '" << current_sub_frase_dir << "' no encontrado o no es un directorio. No se agregaran subfrases para la frase en" << num << ".\n";
         }
 
-        // 5. Corresponds to Final English phrase (generates 2 images: final + repeat)
+        // 5. Frase final en inglés (se copia dos veces)
         fs::copy(en_audio_path, salida + "/en" + std::to_string(contador_salida_audios++) + ".mp3", fs::copy_options::overwrite_existing);
         fs::copy(en_audio_path, salida + "/en" + std::to_string(contador_salida_audios++) + ".mp3", fs::copy_options::overwrite_existing);
     }
 
     std::cout << "\n✅ Archivos preparados exitosamente en: " << salida << std::endl;
-    std::cout << "Total de archivos generados: " << contador_salida_audios - 1 << std::endl; // Adjust for 1-based counting
+    std::cout << "Total de archivos generados: " << contador_salida_audios - 1 << std::endl; // Ajustar por el conteo basado en 1
     
-    std::cout << "Presiona cualquier tecla para cerrar esta ventana..." << std::endl;
-    system("pause"); 
+    // Eliminar el archivo de silencio temporal si aún existe
+    if (fs::exists(silencio_file)) {
+        try {
+            fs::remove(silencio_file);
+            std::cout << "Se eliminó el archivo de silencio temporal: " << silencio_file << std::endl;
+        } catch (const fs::filesystem_error& e) {
+            std::cerr << "Error al eliminar el archivo de silencio temporal " << silencio_file << ": " << e.what() << "\n";
+        }
+    }
 
     return 0;
 }

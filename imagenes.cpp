@@ -11,29 +11,29 @@
 #include <cstdlib>   // For system()
 #include <algorithm> // For std::min and std::max
 #include <cctype>    // For isspace
-#include <sys/stat.h> // For stat() to check directory existence
+#include <filesystem> // For std::filesystem operations
 
 using namespace cv;
 using namespace std;
+namespace fs = std::filesystem; // Alias for std::filesystem
 
-const string FUENTE = "Montserrat-Bold.ttf"; // Ensure the font is in the same folder
+const string FUENTE = "Montserrat-Bold.ttf";
 const int IMG_WIDTH = 1920;
 const int IMG_HEIGHT = 1080;
 
 // Colors
-const Scalar COLOR_RECTANGULO_NUEVO = Scalar(25, 25, 25);     // Near Black for the semi-transparent rectangle
-const Scalar COLOR_TEXTO_INGLES_NUEVO = Scalar(89, 222, 255); // Yellow (#ffde59) -> BGR
-const Scalar COLOR_TEXTO_SUBFRASE_NUEVO = Scalar(99, 191, 0); // Green (#00bf63) -> BGR
-const Scalar COLOR_TEXTO_ESPANOL_NUEVO = Scalar(255, 255, 255); // White (BGR)
+const Scalar COLOR_RECTANGULO_NUEVO = Scalar(25, 25, 25);
+const Scalar COLOR_TEXTO_INGLES_NUEVO = Scalar(89, 222, 255);
+const Scalar COLOR_TEXTO_SUBFRASE_NUEVO = Scalar(99, 191, 0);
+const Scalar COLOR_TEXTO_ESPANOL_NUEVO = Scalar(255, 255, 255);
 
-const string ARCHIVO_PLANTILLA = "plantilla.txt";
+const string ARCHIVO_PLANTILLA = "Excel.txt";
 const int LINE_SPACING = 40;
 const int RECT_VERTICAL_PADDING = 40;
 
 const int TOP_TEXT_OFFSET_FRAGMENTO = 20;
 const int BOTTOM_TEXT_OFFSET_ESPANOL = -20;
-const double RECTANGLE_OPACITY = 0.85; // Opacity for the main rectangle (0.0 fully transparent, 1.0 fully opaque) - Changed to 0.85
-
+const double RECTANGLE_OPACITY = 0.85;
 
 // Function to remove leading and trailing whitespace from a string
 string trim(const string& str) {
@@ -46,12 +46,9 @@ string trim(const string& str) {
 }
 
 // Draws a rectangle with sharp corners (radius parameter is kept for compatibility but forced to 0 logic)
-// This function might not be directly used for the main semi-transparent rectangle anymore,
-// as blending is handled separately. It's kept if other solid rectangles were needed.
 void drawSharpRect(Mat& img, Rect rect, Scalar color) {
     rectangle(img, rect, color, -1, LINE_AA); // -1 for filled
 }
-
 
 // Wraps text into multiple lines to fit within maxWidth.
 // Returns only the lines of text.
@@ -150,7 +147,7 @@ int calculateWrappedTextHeight(Ptr<freetype::FreeType2> ft2, const string& text,
     
     int totalTextHeight = lines.size() * singleLineRenderHeight;
     if (lines.size() > 1) {
-        totalTextHeight += (lines.size() - 1) * LINE_SPACING; // Space between lines
+        totalTextHeight += (lines.size() - 1) * LINE_SPACING;
     }
     return totalTextHeight;
 }
@@ -206,7 +203,7 @@ void drawWrappedTextWithHighlight(
 
     int singleLineRenderHeight = ft2->getTextSize("Tg", fontHeight, -1, nullptr).height;
     int totalRenderedTextHeight = lines_with_indices.size() * singleLineRenderHeight;
-    if (lines_with_indices.size() > 1) { // Corrected: changed 'lines.size()' to 'lines_with_indices.size()'
+    if (lines_with_indices.size() > 1) {
         totalRenderedTextHeight += (lines_with_indices.size() - 1) * LINE_SPACING;
     }
 
@@ -258,7 +255,45 @@ void drawWrappedTextWithHighlight(
 
 int main() {
     // Define font path (constant)
-    const string FUENTE = "Montserrat-Bold.ttf"; // Ensure the font is in the same folder
+    const string FUENTE = "Montserrat-Bold.ttf";
+
+    string output_dir = "imagenes_generadas";
+
+    // --- Start: Clear 'imagenes_generadas' directory ---
+    cout << "Limpiando la carpeta '" << output_dir << "'..." << endl;
+    if (fs::exists(output_dir)) {
+        if (fs::is_directory(output_dir)) {
+            try {
+                for (const auto& entry : fs::directory_iterator(output_dir)) {
+                    fs::remove_all(entry.path()); // Removes files and subdirectories
+                }
+                cout << "✅ Contenido de la carpeta '" << output_dir << "' eliminado exitosamente." << endl;
+            } catch (const fs::filesystem_error& e) {
+                cerr << "❌ Error al limpiar la carpeta '" << output_dir << "': " << e.what() << endl;
+                cerr << "Por favor, cierre cualquier programa que este utilizando archivos en '" << output_dir << "' y vuelva a intentar." << endl;
+                system("pause");
+                return EXIT_FAILURE; // Exit if unable to clean
+            }
+        } else {
+            cerr << "Error: La ruta '" << output_dir << "' existe pero no es un directorio. No se puede limpiar." << endl;
+            system("pause");
+            return EXIT_FAILURE;
+        }
+    } else {
+        cout << "La carpeta '" << output_dir << "' no existe. Se creara." << endl;
+    }
+    // --- End: Clear 'imagenes_generadas' directory ---
+
+
+    // Ensure the output directory exists (create if it was just cleared or never existed)
+    try {
+        fs::create_directories(output_dir);
+        cout << "Directorio '" << output_dir << "' asegurado." << endl;
+    } catch (const fs::filesystem_error& e) {
+        cerr << "Error: No se pudo crear el directorio de salida '" << output_dir << "': " << e.what() << endl;
+        system("pause");
+        return EXIT_FAILURE;
+    }
 
     // Initialize background image path index
     int background_image_idx = 0; // 0 for 1000.png, 1 for 2000.png
@@ -281,33 +316,18 @@ int main() {
         archivo.close();
     } else {
         cerr << "Error: No se pudo abrir el archivo de plantilla: " << ARCHIVO_PLANTILLA << endl;
+        system("pause");
         return 1;
-    }
-
-    string output_dir = "imagenes_generadas";
-    // Check if directory exists before attempting to create to avoid error messages if it already exists
-    struct stat info;
-    if (stat(output_dir.c_str(), &info) != 0) {
-        // Directory does not exist, try to create
-        int system_result = system(("mkdir " + output_dir).c_str());
-        if (system_result != 0) {
-            cerr << "Error: Fallo al crear el directorio de salida '" << output_dir << "'. Codigo de retorno: " << system_result << endl;
-            // Proceeding anyway, but this could cause issues if directory doesn't exist
-        }
-    } else if (!(info.st_mode & S_IFDIR)) {
-        // Path exists but is not a directory
-        cerr << "Error: La ruta '" << output_dir << "' existe pero no es un directorio." << endl;
-        // Proceeding anyway, but this could cause issues
     }
 
 
     Ptr<freetype::FreeType2> ft2 = freetype::createFreeType2();
-    // Check if font loading was successful
     try {
         ft2->loadFontData(FUENTE, 0);
     } catch (const cv::Exception& e) {
         cerr << "Error: No se pudo cargar la fuente '" << FUENTE << "'. Asegurese de que este en el mismo directorio que el ejecutable." << endl;
         cerr << "Error de OpenCV FreeType: " << e.what() << endl;
+        system("pause");
         return 1;
     }
     
@@ -322,36 +342,34 @@ int main() {
     int fontHeight_es = static_cast<int>(55 * 1.15);
     int fontHeight_fragmento_es = static_cast<int>(50 * 1.15);
 
-    int contador_imagenes = 1; // Start at 1 for image naming
+    int contador_imagenes = 1;
     vector<int> imagenes_ingles_solo;
     vector<int> imagenes_ingles_y_espanol;
 
     int main_rect_width = IMG_WIDTH;
-    int main_rect_x = (IMG_WIDTH - main_rect_width) / 2; // Will be 0
+    int main_rect_x = (IMG_WIDTH - main_rect_width) / 2;
 
     if (frases_data.empty()) {
-        cout << "No se encontraron frases en plantilla.txt. No se generaran imagenes." << endl;
+        cout << "No se encontraron frases en Excel.txt. No se generaran imagenes." << endl;
     }
 
-    // --- Image Generation Loop ---
     for (const auto& frase_data : frases_data) {
-        // Determine current background image path
         string current_background_image_path;
         if (background_image_idx == 0) {
             current_background_image_path = "personajes/1000.png";
         } else {
             current_background_image_path = "personajes/2000.png";
         }
-        background_image_idx = 1 - background_image_idx; // Toggle for next phrase
+        background_image_idx = 1 - background_image_idx;
 
-        // Load the background image for the current phrase
         Mat backgroundImage = imread(current_background_image_path);
         if (backgroundImage.empty()) {
             cerr << "Error: No se pudo cargar la imagen de fondo desde " << current_background_image_path << endl;
-            cerr << "Asegurese de que la carpeta 'imagenes' exista y contenga '" 
-                 << (background_image_idx == 0 ? "2000.png" : "1000.png") // Show the missing image
+            cerr << "Asegurese de que la carpeta 'personajes' exista y contenga '" 
+                 << (background_image_idx == 0 ? "2000.png" : "1000.png")
                  << "' en relacion con el ejecutable." << endl;
-            return 1; // Exit if background image for current phrase cannot be loaded
+            system("pause");
+            return 1;
         }
         resize(backgroundImage, backgroundImage, Size(IMG_WIDTH, IMG_HEIGHT), 0, 0, INTER_LINEAR);
 
@@ -378,7 +396,6 @@ int main() {
         Rect mainRect(main_rect_x, main_rect_y, main_rect_width, total_main_rect_height);
 
 
-        // Helper lambda to apply the semi-transparent rectangle
         auto applySemiTransparentRect = [&](Mat& targetImage, const Rect& rectToOverlay) {
             if (rectToOverlay.width <= 0 || rectToOverlay.height <= 0) return;
             Mat roi = targetImage(rectToOverlay);
@@ -386,7 +403,6 @@ int main() {
             addWeighted(coloredOverlay, RECTANGLE_OPACITY, roi, 1.0 - RECTANGLE_OPACITY, 0.0, roi);
         };
 
-        // Image 1: Background with semi-transparent rectangle
         Mat img1 = backgroundImage.clone();
         applySemiTransparentRect(img1, mainRect);
         imwrite(output_dir + "/" + to_string(contador_imagenes) + ".png", img1);
@@ -394,7 +410,6 @@ int main() {
         contador_imagenes++;
 
 
-        // Image 2: English phrase
         Mat img2 = backgroundImage.clone();
         applySemiTransparentRect(img2, mainRect);
         Rect rect_en_section_img2(mainRect.x, mainRect.y + actual_height_fragmento_es_section + spacing, mainRect.width, actual_height_en_section);
@@ -405,7 +420,6 @@ int main() {
         contador_imagenes++;
 
 
-        // Image 3: English and Spanish phrases
         Mat img3 = backgroundImage.clone();
         applySemiTransparentRect(img3, mainRect);
         Rect rect_en_section_img3(mainRect.x, mainRect.y + actual_height_fragmento_es_section + spacing, mainRect.width, actual_height_en_section);
@@ -476,7 +490,7 @@ int main() {
         indices_file << frases_data.size() << endl;
         
         // Total de imagenes generadas
-        indices_file << contador_imagenes - 1 << endl; // contador_imagenes is 1 past the last image number
+        indices_file << contador_imagenes - 1 << endl;
 
         indices_file.close();
         cout << "✅ Indices de imagenes guardados en IndicesImagenes.txt" << endl;
@@ -484,8 +498,6 @@ int main() {
         cerr << "Error: No se pudo abrir el archivo IndicesImagenes.txt para escritura." << endl;
     }
 
-    cout << "Presiona cualquier tecla para cerrar esta ventana..." << endl;
-    system("pause"); // This will print "Press any key to continue . . ." and wait for input
 
     return 0;
 }

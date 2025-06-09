@@ -1,7 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <string>
-#include <cstdlib>
+#include <cstdlib> // Para EXIT_FAILURE
 #include <sstream>
 #include <algorithm>
 #include <fstream>
@@ -16,20 +16,57 @@ namespace fs = std::filesystem;
 // Constantes
 const std::string RUTA_BASE_AUDIOS = "Audios_Sin_Nombres";
 const std::string RUTA_DESTINO_AUDIOS = RUTA_BASE_AUDIOS + "/../Audios";
+const std::string FRAGMENTS_CONFIG_FILE = "cantidadFragmentos.txt";
 
-// Función para dividir una cadena por comas en un vector de enteros
+// Estructura para contener las listas de fragmentos leidas del archivo
+struct FragmentData {
+    std::vector<int> impares;
+    std::vector<int> pares;
+};
+
+// Funcion para dividir una cadena por comas en un vector de enteros
 std::vector<int> dividir_por_coma(const std::string& input) {
     std::vector<int> resultado;
     std::stringstream ss(input);
     std::string item;
     while (std::getline(ss, item, ',')) {
         try {
-            resultado.push_back(std::stoi(item));
+            item.erase(0, item.find_first_not_of(" \t\n\r\f\v"));
+            item.erase(item.find_last_not_of(" \t\n\r\f\v") + 1);
+            if (!item.empty()) {
+                resultado.push_back(std::stoi(item));
+            }
         } catch (...) {
-            std::cerr << "❌ Valor no valido: " << item << "\n";
+            std::cerr << "❌ Valor no valido encontrado en la lista de fragmentos: '" << item << "'. Se ignorara.\n";
         }
     }
     return resultado;
+}
+
+// Funcion para leer las listas de fragmentos del archivo de configuracion
+FragmentData read_fragment_data_from_file(const std::string& filename) {
+    FragmentData data;
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        std::cerr << "Error: No se pudo abrir el archivo de configuracion de fragmentos '" << filename << "'. Asegurese de que la GUI de Python lo haya creado.\n";
+        exit(EXIT_FAILURE);
+    }
+
+    std::string line1, line2;
+    if (std::getline(file, line1)) {
+        data.impares = dividir_por_coma(line1);
+    } else {
+        std::cerr << "Advertencia: El archivo '" << filename << "' esta vacio o no contiene la linea de fragmentos impares.\n";
+    }
+
+    if (std::getline(file, line2)) {
+        data.pares = dividir_por_coma(line2);
+    } else {
+        std::cerr << "Advertencia: El archivo '" << filename << "' no contiene la linea de fragmentos pares.\n";
+    }
+
+    file.close();
+    return data;
 }
 
 // Clase para gestionar archivos temporales
@@ -43,7 +80,7 @@ public:
     std::string path() const { return filename; }
 };
 
-// Función para preparar un directorio
+// Funcion para preparar un directorio
 void prepare_target_directory(const fs::path& target_dir_path) {
     if (fs::exists(target_dir_path)) {
         std::cout << "Limpiando directorio existente: " << target_dir_path.string() << "\n";
@@ -63,7 +100,7 @@ void prepare_target_directory(const fs::path& target_dir_path) {
     }
 }
 
-// Función para extraer la marca de tiempo de nombres de archivo ElevenLabs
+// Funcion para extraer la marca de tiempo de nombres de archivo ElevenLabs
 std::string extract_timestamp_from_elevenlabs_filename(const fs::path& filepath) {
     std::string filename = filepath.filename().string();
     std::regex timestamp_regex(R"(ElevenLabs_(\d{4}-\d{2}-\d{2}T\d{2}_\d{2}_\d{2}))");
@@ -74,16 +111,14 @@ std::string extract_timestamp_from_elevenlabs_filename(const fs::path& filepath)
     return "";
 }
 
-// Función para verificar si un archivo ya ha sido renombrado a un formato objetivo
+// Funcion para verificar si un archivo ya ha sido renombrado a un formato objetivo
 bool is_already_renamed(const fs::path& filepath, const std::string& prefix, bool is_fragment_mode) {
     std::string filename = filepath.filename().string();
-    if (extract_timestamp_from_elevenlabs_filename(filepath).empty()) { // Solo aplica a archivos que NO son ElevenLabs originales
+    if (extract_timestamp_from_elevenlabs_filename(filepath).empty()) {
         if (is_fragment_mode) {
-            // Ejemplo: en1fr1.mp3, es2fr3.mp3
             std::regex fragment_regex(prefix + R"(\d+fr\d+\.mp3)");
             return std::regex_match(filename, fragment_regex);
         } else {
-            // Ejemplo: es1.mp3, en2.mp3
             std::regex normal_regex(prefix + R"(\d+\.mp3)");
             return std::regex_match(filename, normal_regex);
         }
@@ -91,17 +126,17 @@ bool is_already_renamed(const fs::path& filepath, const std::string& prefix, boo
     return false;
 }
 
-// Función central para procesar cada carpeta
+// Funcion central para procesar cada carpeta
 int process_audio_folder(
     const fs::path& source_folder,
     const fs::path& destination_base_folder,
     const std::string& prefix,
     bool is_odd_numbered,
     const std::vector<int>& fragments_list_for_this_folder,
-    int& total_renamed_files_counter // Contador global para el total de archivos procesados
+    int& total_renamed_files_counter
 ) {
     std::cout << "\nProcesando carpeta: " << source_folder.string() << "\n";
-    std::vector<fs::path> mp3_files_to_process_paths; // Guardar paths directamente
+    std::vector<fs::path> mp3_files_to_process_paths;
     int files_already_renamed_count = 0;
 
     if (!fs::exists(source_folder)) {
@@ -109,7 +144,6 @@ int process_audio_folder(
         return 0;
     }
 
-    // Recopilar archivos, filtrando los ya renombrados o simplemente copiándolos
     for (const auto& entry : fs::directory_iterator(source_folder)) {
         if (entry.is_regular_file() && entry.path().extension() == ".mp3") {
             bool is_fragment_mode = !fragments_list_for_this_folder.empty();
@@ -124,11 +158,11 @@ int process_audio_folder(
                     if (std::regex_search(filename_str, matches, fragment_name_regex) && matches.size() > 1) {
                         int frase_num = std::stoi(matches[1].str());
                         fs::path subfrases_target = destination_base_folder / ("SubFrases_Frase" + std::to_string(frase_num));
-                        fs::create_directories(subfrases_target); // Asegurar que la carpeta exista
+                        fs::create_directories(subfrases_target);
                         final_destination_path = subfrases_target / entry.path().filename();
                     } else {
-                         std::cerr << "⚠️ Advertencia: Archivo fragmento pre-renombrado con formato inesperado: " << filename_str << ". Saltando.\n";
-                         continue;
+                        std::cerr << "⚠️ Advertencia: Archivo fragmento pre-renombrado con formato inesperado: " << filename_str << ". Saltando.\n";
+                        continue;
                     }
                 } else {
                     final_destination_path = destination_base_folder / entry.path().filename();
@@ -147,7 +181,6 @@ int process_audio_folder(
         }
     }
 
-    // Ordenar archivos de ElevenLabs por marca de tiempo
     std::sort(mp3_files_to_process_paths.begin(), mp3_files_to_process_paths.end(), [](const auto& a, const auto& b) {
         std::string ts_a = extract_timestamp_from_elevenlabs_filename(a);
         std::string ts_b = extract_timestamp_from_elevenlabs_filename(b);
@@ -157,7 +190,7 @@ int process_audio_folder(
     int files_processed_in_this_folder = 0;
     int current_logical_index = 0;
 
-    if (fragments_list_for_this_folder.empty()) { // Modo prefijo normal (esX.mp3 / enX.mp3)
+    if (fragments_list_for_this_folder.empty()) {
         for (const auto& original_path : mp3_files_to_process_paths) {
             current_logical_index++;
             int actual_number = is_odd_numbered ? (current_logical_index * 2) - 1 : (current_logical_index * 2);
@@ -165,15 +198,15 @@ int process_audio_folder(
             fs::path final_path = destination_base_folder / nuevo_nombre;
 
             try {
-                fs::copy(original_path, final_path, fs::copy_options::overwrite_existing); // Copiar el original
+                fs::copy(original_path, final_path, fs::copy_options::overwrite_existing);
                 std::cout << "✅ Renombrado y copiado a: " << final_path.string() << "\n";
                 files_processed_in_this_folder++;
             } catch (const std::exception& e) {
                 std::cerr << "❌ Error al copiar/renombrar archivo: " << e.what() << "\n";
             }
         }
-    } else { // Modo fragmentos (enXfrY.mp3)
-        int original_paths_index = 0; // Índice para recorrer mp3_files_to_process_paths
+    } else {
+        int original_paths_index = 0;
         for (int f = 0; f < fragments_list_for_this_folder.size(); ++f) {
             int current_fragment_list_idx = f + 1;
             int frase_num = is_odd_numbered ? (current_fragment_list_idx * 2) - 1 : (current_fragment_list_idx * 2);
@@ -185,7 +218,7 @@ int process_audio_folder(
             for (int fr_idx = 1; fr_idx <= num_frags_in_phrase; ++fr_idx) {
                 if (original_paths_index >= mp3_files_to_process_paths.size()) {
                     std::cerr << "❗ No hay suficientes archivos para cubrir todos los fragmentos. Procesamiento detenido.\n";
-                    total_renamed_files_counter += files_processed_in_this_folder; // Asegurar que se sumen los ya procesados
+                    total_renamed_files_counter += files_processed_in_this_folder;
                     total_renamed_files_counter += files_already_renamed_count;
                     return files_processed_in_this_folder + files_already_renamed_count;
                 }
@@ -212,27 +245,29 @@ int process_audio_folder(
 
 
 int main() {
-    std::cout << "⚠️ Asegurate de que NINGUN archivo este abierto antes de continuar.\n";
-    std::cout << "Estas listo para comenzar el renombrado y organizacion automatica? (s/n): ";
-    char confirmacion;
-    std::cin >> confirmacion;
-    if (confirmacion != 's' && confirmacion != 'S') {
-        std::cout << "🚫 Cancelado por el usuario.\n";
-        return 0;
+    // Eliminar todo el contenido de la carpeta "Audios"
+    fs::path audios_folder_to_clean = "Audios";
+    if (fs::exists(audios_folder_to_clean)) {
+        std::cout << "Limpiando la carpeta 'Audios'..." << std::endl;
+        try {
+            for (const auto& entry : fs::directory_iterator(audios_folder_to_clean)) {
+                fs::remove_all(entry.path());
+            }
+            std::cout << "✅ Contenido de la carpeta 'Audios' eliminado exitosamente." << std::endl;
+        } catch (const fs::filesystem_error& e) {
+            std::cerr << "❌ Error al limpiar la carpeta 'Audios': " << e.what() << std::endl;
+            // No salir, se intentará continuar aunque la limpieza falle, pero el usuario debe ser consciente.
+        }
+    } else {
+        std::cout << "La carpeta 'Audios' no existe. Se creara mas tarde si es necesario." << std::endl;
     }
-    std::cin.ignore();
 
-    std::string entrada_fragmentos_impares_str;
-    std::cout << "\nIngrese lista de fragmentos para archivos IMPARES (ejemplo: 2,3,1,2): ";
-    std::getline(std::cin, entrada_fragmentos_impares_str);
-    std::vector<int> fragmentos_impares = dividir_por_coma(entrada_fragmentos_impares_str);
+    std::cout << "⚠️ Asegurate de que NINGUN archivo este abierto antes de continuar.\n";
+    std::cout << "Iniciando proceso de Renombrado y Organizacion Automatico...\n";
 
-    std::string entrada_fragmentos_pares_str;
-    std::cout << "Ingrese lista de fragmentos para archivos PARES (ejemplo: 2,3,1,2): ";
-    std::getline(std::cin, entrada_fragmentos_pares_str);
-    std::vector<int> fragmentos_pares = dividir_por_coma(entrada_fragmentos_pares_str);
+    FragmentData fragments = read_fragment_data_from_file(FRAGMENTS_CONFIG_FILE);
+    std::cout << "Listas de fragmentos leidas de '" << FRAGMENTS_CONFIG_FILE << "'.\n";
 
-    // Preparar directorios de destino principales
     fs::path frases_spanish_dir = fs::path(RUTA_DESTINO_AUDIOS) / "Frases_Spanish";
     fs::path frases_english_dir = fs::path(RUTA_DESTINO_AUDIOS) / "Frases_English";
     fs::path subfrases_base_dir = fs::path(RUTA_DESTINO_AUDIOS);
@@ -242,19 +277,15 @@ int main() {
 
     int total_processed_files = 0;
 
-    // Procesar carpetas de "impares"
     process_audio_folder(fs::path(RUTA_BASE_AUDIOS) / "1_es", frases_spanish_dir, "es", true, {}, total_processed_files);
     process_audio_folder(fs::path(RUTA_BASE_AUDIOS) / "1_en", frases_english_dir, "en", true, {}, total_processed_files);
-    process_audio_folder(fs::path(RUTA_BASE_AUDIOS) / "1_subs", subfrases_base_dir, "en", true, fragmentos_impares, total_processed_files);
+    process_audio_folder(fs::path(RUTA_BASE_AUDIOS) / "1_subs", subfrases_base_dir, "en", true, fragments.impares, total_processed_files);
 
-    // Procesar carpetas de "pares"
     process_audio_folder(fs::path(RUTA_BASE_AUDIOS) / "2_es", frases_spanish_dir, "es", false, {}, total_processed_files);
     process_audio_folder(fs::path(RUTA_BASE_AUDIOS) / "2_en", frases_english_dir, "en", false, {}, total_processed_files);
-    process_audio_folder(fs::path(RUTA_BASE_AUDIOS) / "2_subs", subfrases_base_dir, "en", false, fragmentos_pares, total_processed_files);
+    process_audio_folder(fs::path(RUTA_BASE_AUDIOS) / "2_subs", subfrases_base_dir, "en", false, fragments.pares, total_processed_files);
 
     std::cout << "\n🎉 Se procesaron y organizaron " << total_processed_files << " archivos correctamente.\n";
-    std::cout << "Presiona cualquier tecla para cerrar esta ventana..." << std::endl;
-    system("pause");
 
     return 0;
 }
